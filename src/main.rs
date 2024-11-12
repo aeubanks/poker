@@ -1,3 +1,5 @@
+use clap::Parser;
+
 const MAX_CARDS: usize = 12;
 
 const NUM_RANKS: u8 = 13;
@@ -140,23 +142,45 @@ enum CardOrJoker {
     Joker,
 }
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(long, default_value_t = 7)]
+    cards: usize,
+
+    #[arg(long, default_value_t = 1)]
+    decks: usize,
+
+    #[arg(long, default_value_t = 0)]
+    jokers: u8,
+
+    #[arg(long, default_value_t = 1000000)]
+    iters: u64,
+}
+
 fn main() {
     use rand::seq::SliceRandom;
 
+    let args = Args::parse();
+
+    if args.cards > MAX_CARDS {
+        println!("Does not support more than {} cards", MAX_CARDS);
+        std::process::exit(1);
+    }
+
     let mut rng = rand::thread_rng();
     let mut deck = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..args.decks {
         for suit in 0..NUM_SUITS {
             for rank in 0..NUM_RANKS {
                 deck.push(CardOrJoker::Card(Card { suit, rank }));
             }
         }
     }
-    for _ in 0..2 {
+    for _ in 0..args.jokers {
         deck.push(CardOrJoker::Joker);
     }
 
-    let iters = 100000000;
     let mut num_pair = 0;
     let mut num_3oak = 0;
     let mut num_4oak = 0;
@@ -167,9 +191,9 @@ fn main() {
     let mut num_flush = 0;
     let mut num_straight_flush = 0;
     let mut num_flush_house = 0;
-    for _ in 0..iters {
+    for _ in 0..args.iters {
         let cards_or_jokers = deck
-            .choose_multiple(&mut rng, 7)
+            .choose_multiple(&mut rng, args.cards)
             .copied()
             .collect::<arrayvec::ArrayVec<CardOrJoker, MAX_CARDS>>();
         let num_jokers = cards_or_jokers
@@ -233,7 +257,7 @@ fn main() {
         println!(
             "{s: >width$}: {p}",
             width = max_str_len,
-            p = (c as f64 / iters as f64)
+            p = (c as f64 / args.iters as f64)
         );
     }
 }
