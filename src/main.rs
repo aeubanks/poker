@@ -39,67 +39,93 @@ fn suit_counts(cards: &[Card]) -> RankCounts {
     ret
 }
 
-fn is_n_of_a_kind(cards: &[Card], n: u8) -> bool {
-    assert!(n != 0);
+fn is_n_of_a_kind(cards: &[Card], n: u8, num_jokers: u8) -> bool {
     let mut counts = <[u8; NUM_RANKS as usize]>::default();
     for &c in cards {
         let count = &mut counts[c.rank as usize];
         *count += 1;
-        if *count >= n {
+        if *count + num_jokers >= n {
             return true;
         }
     }
-    false
+    num_jokers >= n
 }
 
-fn is_two_pair(cards: &[Card]) -> bool {
-    rank_counts(cards).iter().map(|&c| c / 2).sum::<u8>() >= 2
-}
-
-fn is_full_house(cards: &[Card]) -> bool {
-    let rank_counts = rank_counts(cards);
-    let mut has_three = false;
-    let mut has_two = false;
-    for mut count in rank_counts {
-        if count >= 3 {
-            count -= 3;
-            has_three = true;
+fn is_two_pair(cards: &[Card], mut num_jokers: u8) -> bool {
+    let mut num_pairs = 0;
+    for i in rank_counts(cards) {
+        if i % 2 == 1 {
+            if num_jokers > 0 {
+                num_jokers -= 1;
+                num_pairs += 1;
+            }
         }
-        if count >= 2 {
-            has_two = true;
-        }
+        num_pairs += i / 2;
     }
-    has_three && has_two
+    num_pairs + num_jokers / 2 >= 2
 }
 
-fn is_flush(cards: &[Card]) -> bool {
-    suit_counts(cards).iter().any(|&c| c >= 5)
+fn is_full_house(cards: &[Card], mut num_jokers: u8) -> bool {
+    let mut fill_with_jokers = |val: &mut u8, fill_to: u8| -> bool {
+        if *val >= fill_to {
+            return true;
+        }
+        if *val + num_jokers < fill_to {
+            return false;
+        }
+        num_jokers -= fill_to - *val;
+        *val = fill_to;
+        true
+    };
+    let mut rank_counts = rank_counts(cards);
+    // FIXME: no need to sort, just find two largest values
+    rank_counts.sort_by(|a, b| b.cmp(a));
+    if !fill_with_jokers(&mut rank_counts[0], 3) {
+        return false;
+    }
+    rank_counts[0] -= 3;
+    if fill_with_jokers(&mut rank_counts[0], 2) {
+        return true;
+    }
+    fill_with_jokers(&mut rank_counts[1], 2)
 }
 
-fn is_straight(cards: &[Card]) -> bool {
+fn is_flush(cards: &[Card], num_jokers: u8) -> bool {
+    suit_counts(cards).iter().any(|&c| c + num_jokers >= 5)
+}
+
+fn is_straight(cards: &[Card], num_jokers: u8) -> bool {
     let ranks = ranks_for_straight(cards);
     let mut window_sum = ranks.iter().take(5).sum::<u8>();
-    if window_sum == 5 {
+    if window_sum + num_jokers == 5 {
         return true;
     }
     for i in 5..ranks.len() {
         window_sum -= ranks[i - 5];
         window_sum += ranks[i];
-        if window_sum == 5 {
+        if window_sum + num_jokers == 5 {
             return true;
         }
     }
     false
 }
 
-fn is_straight_flush(cards: &[Card]) -> bool {
+fn is_straight_flush(cards: &[Card], num_jokers: u8) -> bool {
     let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
 
     for &c in cards {
         cards_by_suit[c.suit as usize].push(c);
     }
 
-    cards_by_suit.iter().any(|cards| is_straight(cards))
+    cards_by_suit
+        .iter()
+        .any(|cards| is_straight(cards, num_jokers))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CardOrJoker {
+    Card(Card),
+    Joker,
 }
 
 fn main() {
@@ -108,13 +134,17 @@ fn main() {
     let mut rng = rand::thread_rng();
     let mut deck = Vec::new();
     for _ in 0..4 {
-        for suit in 0..(NUM_SUITS - 1) {
+        for suit in 0..NUM_SUITS {
             for rank in 0..NUM_RANKS {
-                deck.push(Card { suit, rank });
+                deck.push(CardOrJoker::Card(Card { suit, rank }));
             }
         }
     }
-    let iters = 10000000;
+    for _ in 0..2 {
+        deck.push(CardOrJoker::Joker);
+    }
+
+    let iters = 100000000;
     let mut num_pair = 0;
     let mut num_3oak = 0;
     let mut num_4oak = 0;
@@ -125,35 +155,46 @@ fn main() {
     let mut num_flush = 0;
     let mut num_straight_flush = 0;
     for _ in 0..iters {
-        let cards = deck
-            .choose_multiple(&mut rng, 9)
+        let cards_or_jokers = deck
+            .choose_multiple(&mut rng, 7)
             .copied()
+            .collect::<arrayvec::ArrayVec<CardOrJoker, MAX_CARDS>>();
+        let num_jokers = cards_or_jokers
+            .iter()
+            .filter(|&&coj| coj == CardOrJoker::Joker)
+            .count() as u8;
+        let cards = cards_or_jokers
+            .iter()
+            .filter_map(|coj| match coj {
+                CardOrJoker::Card(c) => Some(*c),
+                CardOrJoker::Joker => None,
+            })
             .collect::<arrayvec::ArrayVec<Card, MAX_CARDS>>();
-        if is_n_of_a_kind(&cards, 2) {
+        if is_n_of_a_kind(&cards, 2, num_jokers) {
             num_pair += 1;
         }
-        if is_n_of_a_kind(&cards, 3) {
+        if is_n_of_a_kind(&cards, 3, num_jokers) {
             num_3oak += 1;
         }
-        if is_n_of_a_kind(&cards, 4) {
+        if is_n_of_a_kind(&cards, 4, num_jokers) {
             num_4oak += 1;
         }
-        if is_n_of_a_kind(&cards, 5) {
+        if is_n_of_a_kind(&cards, 5, num_jokers) {
             num_5oak += 1;
         }
-        if is_two_pair(&cards) {
+        if is_two_pair(&cards, num_jokers) {
             num_two_pair += 1;
         }
-        if is_full_house(&cards) {
+        if is_full_house(&cards, num_jokers) {
             num_full_house += 1;
         }
-        if is_straight(&cards) {
+        if is_straight(&cards, num_jokers) {
             num_straight += 1;
         }
-        if is_flush(&cards) {
+        if is_flush(&cards, num_jokers) {
             num_flush += 1;
         }
-        if is_straight_flush(&cards) {
+        if is_straight_flush(&cards, num_jokers) {
             num_straight_flush += 1;
         }
     }
@@ -272,25 +313,30 @@ mod tests {
 
     #[test]
     fn test_is_n_of_a_kind() {
-        assert!(!is_n_of_a_kind(&[], 1));
-        assert!(is_n_of_a_kind(&[Card { suit: 0, rank: 1 }], 1));
+        assert!(is_n_of_a_kind(&[], 0, 0));
+        assert!(!is_n_of_a_kind(&[], 1, 0));
+        assert!(is_n_of_a_kind(&[Card { suit: 0, rank: 1 }], 1, 0));
 
         assert!(!is_n_of_a_kind(
             &[Card { suit: 1, rank: 0 }, Card { suit: 0, rank: 1 }],
-            2
+            2,
+            0
         ));
         assert!(is_n_of_a_kind(
             &[Card { suit: 1, rank: 1 }, Card { suit: 1, rank: 1 }],
-            2
+            2,
+            0
         ));
         assert!(is_n_of_a_kind(
             &[Card { suit: 0, rank: 1 }, Card { suit: 1, rank: 1 }],
-            2
+            2,
+            0
         ));
 
         assert!(!is_n_of_a_kind(
             &[Card { suit: 0, rank: 1 }, Card { suit: 1, rank: 1 }],
-            3
+            3,
+            0
         ));
         assert!(is_n_of_a_kind(
             &[
@@ -298,7 +344,8 @@ mod tests {
                 Card { suit: 0, rank: 1 },
                 Card { suit: 1, rank: 1 },
             ],
-            3
+            3,
+            0
         ));
         assert!(is_n_of_a_kind(
             &[
@@ -307,204 +354,496 @@ mod tests {
                 Card { suit: 1, rank: 1 },
                 Card { suit: 1, rank: 2 },
             ],
-            3
+            3,
+            0
+        ));
+
+        assert!(!is_n_of_a_kind(&[], 2, 1));
+        assert!(is_n_of_a_kind(&[], 2, 2));
+        assert!(is_n_of_a_kind(&[Card { suit: 1, rank: 2 },], 2, 1));
+        assert!(!is_n_of_a_kind(
+            &[Card { suit: 1, rank: 2 }, Card { suit: 2, rank: 3 },],
+            3,
+            1
+        ));
+        assert!(is_n_of_a_kind(
+            &[Card { suit: 1, rank: 3 }, Card { suit: 2, rank: 3 },],
+            3,
+            1
         ));
     }
 
     #[test]
     fn test_is_two_pair() {
-        assert!(!is_two_pair(&[]));
-        assert!(!is_two_pair(&[Card { suit: 0, rank: 0 }]));
-        assert!(!is_two_pair(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-        ]));
-        assert!(!is_two_pair(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-        ]));
-        assert!(is_two_pair(&[
-            Card { suit: 0, rank: 1 },
-            Card { suit: 1, rank: 1 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 3, rank: 0 },
-        ]));
-        assert!(is_two_pair(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 2, rank: 0 },
-        ]));
-        assert!(is_two_pair(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-        ]));
+        assert!(!is_two_pair(&[], 0));
+        assert!(!is_two_pair(&[Card { suit: 0, rank: 0 }], 0));
+        assert!(!is_two_pair(
+            &[Card { suit: 0, rank: 0 }, Card { suit: 0, rank: 0 },],
+            0
+        ));
+        assert!(!is_two_pair(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_two_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_two_pair(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 2, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_two_pair(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+            ],
+            0
+        ));
+
+        assert!(!is_two_pair(&[], 3));
+        assert!(is_two_pair(&[], 4));
+        assert!(is_two_pair(&[Card { suit: 0, rank: 0 },], 3));
+        assert!(is_two_pair(
+            &[Card { suit: 1, rank: 1 }, Card { suit: 0, rank: 0 },],
+            2
+        ));
+        assert!(is_two_pair(
+            &[Card { suit: 0, rank: 0 }, Card { suit: 0, rank: 0 },],
+            2
+        ));
+        assert!(is_two_pair(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+            ],
+            1
+        ));
+        assert!(!is_two_pair(
+            &[Card { suit: 0, rank: 0 }, Card { suit: 0, rank: 0 },],
+            1
+        ));
     }
 
     #[test]
     fn test_is_full_house() {
-        assert!(!is_full_house(&[]));
-        assert!(!is_full_house(&[
-            Card { suit: 0, rank: 1 },
-            Card { suit: 1, rank: 1 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 3, rank: 0 },
-        ]));
-        assert!(!is_full_house(&[
-            Card { suit: 0, rank: 1 },
-            Card { suit: 1, rank: 1 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 3, rank: 0 },
-            Card { suit: 3, rank: 2 },
-        ]));
-        assert!(is_full_house(&[
-            Card { suit: 0, rank: 1 },
-            Card { suit: 1, rank: 1 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 3, rank: 0 },
-            Card { suit: 3, rank: 0 },
-        ]));
-        assert!(is_full_house(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 1, rank: 0 },
-            Card { suit: 2, rank: 0 },
-            Card { suit: 3, rank: 0 },
-            Card { suit: 3, rank: 0 },
-        ]));
+        assert!(!is_full_house(&[], 0));
+        assert!(!is_full_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_full_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 2 },
+            ],
+            0
+        ));
+        assert!(is_full_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_full_house(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_full_house(&[], 5));
+        assert!(!is_full_house(&[], 4));
+        assert!(is_full_house(&[Card { suit: 0, rank: 0 },], 4));
+        assert!(is_full_house(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            2
+        ));
+        assert!(is_full_house(
+            &[Card { suit: 0, rank: 0 }, Card { suit: 1, rank: 1 },],
+            3
+        ));
+        assert!(is_full_house(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            1
+        ));
+        assert!(is_full_house(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            1
+        ));
+        assert!(is_full_house(
+            &[
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            1
+        ));
     }
 
     #[test]
     fn test_is_flush() {
-        assert!(!is_flush(&[]));
-        assert!(!is_flush(&[Card { suit: 0, rank: 0 },]));
-        assert!(!is_flush(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-        ]));
-        assert!(is_flush(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 1 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-        ]));
-        assert!(!is_flush(&[
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 0, rank: 0 },
-            Card { suit: 1, rank: 0 },
-        ]));
+        assert!(!is_flush(&[], 0));
+        assert!(!is_flush(&[Card { suit: 0, rank: 0 },], 0));
+        assert!(!is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_flush(&[], 4));
+        assert!(is_flush(&[], 5));
+        assert!(is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+            ],
+            1
+        ));
+        assert!(is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+            ],
+            2
+        ));
+        assert!(!is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+            ],
+            2
+        ));
     }
 
     #[test]
     fn test_is_straight() {
-        assert!(!is_straight(&[]));
-        assert!(!is_straight(&[Card { suit: 0, rank: 0 },]));
+        assert!(!is_straight(&[], 0));
+        assert!(!is_straight(&[Card { suit: 0, rank: 0 },], 0));
 
-        assert!(!is_straight(&[
-            Card { suit: 0, rank: 2 },
-            Card { suit: 0, rank: 3 },
-            Card { suit: 0, rank: 4 },
-            Card { suit: 0, rank: 5 },
-        ]));
-        assert!(is_straight(&[
-            Card { suit: 1, rank: R2 },
-            Card { suit: 1, rank: R3 },
-            Card { suit: 1, rank: R4 },
-            Card { suit: 1, rank: R5 },
-            Card { suit: 1, rank: R6 },
-        ]));
-        assert!(is_straight(&[
-            Card { suit: 2, rank: R2 },
-            Card { suit: 3, rank: R3 },
-            Card { suit: 0, rank: R4 },
-            Card { suit: 0, rank: R5 },
-            Card { suit: 1, rank: R6 },
-        ]));
-        assert!(is_straight(&[
-            Card { suit: 0, rank: R10 },
-            Card { suit: 0, rank: RJ },
-            Card { suit: 0, rank: RQ },
-            Card { suit: 0, rank: RK },
-            Card { suit: 0, rank: RA },
-        ]));
-        assert!(is_straight(&[
-            Card { suit: 0, rank: RA },
-            Card { suit: 0, rank: R2 },
-            Card { suit: 0, rank: R3 },
-            Card { suit: 0, rank: R4 },
-            Card { suit: 0, rank: R5 },
-        ]));
-        assert!(!is_straight(&[
-            Card { suit: 0, rank: RK },
-            Card { suit: 0, rank: RA },
-            Card { suit: 0, rank: R2 },
-            Card { suit: 0, rank: R3 },
-            Card { suit: 0, rank: R4 },
-        ]));
+        assert!(!is_straight(
+            &[
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 3 },
+                Card { suit: 0, rank: 4 },
+                Card { suit: 0, rank: 5 },
+            ],
+            0
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 1, rank: R2 },
+                Card { suit: 1, rank: R3 },
+                Card { suit: 1, rank: R4 },
+                Card { suit: 1, rank: R5 },
+                Card { suit: 1, rank: R6 },
+            ],
+            0
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 2, rank: R2 },
+                Card { suit: 3, rank: R3 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+                Card { suit: 1, rank: R6 },
+            ],
+            0
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RQ },
+                Card { suit: 0, rank: RK },
+                Card { suit: 0, rank: RA },
+            ],
+            0
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: RA },
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+            ],
+            0
+        ));
+        assert!(!is_straight(
+            &[
+                Card { suit: 0, rank: RK },
+                Card { suit: 0, rank: RA },
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+            ],
+            0
+        ));
+        assert!(!is_straight(&[], 4));
+        assert!(is_straight(&[], 5));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: RA },
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+            ],
+            1
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+            ],
+            1
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+            ],
+            2
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+            ],
+            2
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R6 },
+            ],
+            2
+        ));
+        assert!(is_straight(
+            &[Card { suit: 0, rank: R2 }, Card { suit: 0, rank: R6 },],
+            3
+        ));
+        assert!(is_straight(
+            &[Card { suit: 0, rank: R3 }, Card { suit: 0, rank: R6 },],
+            3
+        ));
+        assert!(!is_straight(
+            &[Card { suit: 0, rank: R3 }, Card { suit: 0, rank: R4 },],
+            2
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RK },
+                Card { suit: 0, rank: RA },
+            ],
+            1
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RQ },
+                Card { suit: 0, rank: RK },
+            ],
+            1
+        ));
     }
 
     #[test]
     fn test_is_straight_flush() {
-        assert!(!is_straight_flush(&[]));
-        assert!(!is_straight_flush(&[Card { suit: 0, rank: 0 },]));
+        assert!(!is_straight_flush(&[], 0));
+        assert!(!is_straight_flush(&[Card { suit: 0, rank: 0 },], 0));
 
-        assert!(!is_straight_flush(&[
-            Card { suit: 0, rank: 2 },
-            Card { suit: 0, rank: 3 },
-            Card { suit: 0, rank: 4 },
-            Card { suit: 0, rank: 5 },
-        ]));
-        assert!(is_straight_flush(&[
-            Card { suit: 1, rank: R2 },
-            Card { suit: 1, rank: R3 },
-            Card { suit: 1, rank: R4 },
-            Card { suit: 1, rank: R5 },
-            Card { suit: 1, rank: R6 },
-        ]));
-        assert!(!is_straight_flush(&[
-            Card { suit: 2, rank: R2 },
-            Card { suit: 3, rank: R3 },
-            Card { suit: 0, rank: R4 },
-            Card { suit: 0, rank: R5 },
-            Card { suit: 1, rank: R6 },
-        ]));
-        assert!(is_straight_flush(&[
-            Card { suit: 0, rank: R10 },
-            Card { suit: 0, rank: RJ },
-            Card { suit: 0, rank: RQ },
-            Card { suit: 0, rank: RK },
-            Card { suit: 0, rank: RA },
-        ]));
-        assert!(is_straight_flush(&[
-            Card { suit: 0, rank: RA },
-            Card { suit: 0, rank: R2 },
-            Card { suit: 0, rank: R3 },
-            Card { suit: 0, rank: R4 },
-            Card { suit: 0, rank: R5 },
-        ]));
-        assert!(!is_straight_flush(&[
-            Card { suit: 0, rank: RK },
-            Card { suit: 0, rank: RA },
-            Card { suit: 0, rank: R2 },
-            Card { suit: 0, rank: R3 },
-            Card { suit: 0, rank: R4 },
-        ]));
-        assert!(is_straight_flush(&[
-            Card { suit: 1, rank: R4 },
-            Card { suit: 0, rank: R5 },
-            Card { suit: 0, rank: R6 },
-            Card { suit: 0, rank: R7 },
-            Card { suit: 0, rank: R8 },
-            Card { suit: 0, rank: R9 },
-        ]));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 3 },
+                Card { suit: 0, rank: 4 },
+                Card { suit: 0, rank: 5 },
+            ],
+            0
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 1, rank: R2 },
+                Card { suit: 1, rank: R3 },
+                Card { suit: 1, rank: R4 },
+                Card { suit: 1, rank: R5 },
+                Card { suit: 1, rank: R6 },
+            ],
+            0
+        ));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 2, rank: R2 },
+                Card { suit: 3, rank: R3 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+                Card { suit: 1, rank: R6 },
+            ],
+            0
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RQ },
+                Card { suit: 0, rank: RK },
+                Card { suit: 0, rank: RA },
+            ],
+            0
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 0, rank: RA },
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+                Card { suit: 0, rank: R5 },
+            ],
+            0
+        ));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 0, rank: RK },
+                Card { suit: 0, rank: RA },
+                Card { suit: 0, rank: R2 },
+                Card { suit: 0, rank: R3 },
+                Card { suit: 0, rank: R4 },
+            ],
+            0
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 1, rank: R4 },
+                Card { suit: 0, rank: R5 },
+                Card { suit: 0, rank: R6 },
+                Card { suit: 0, rank: R7 },
+                Card { suit: 0, rank: R8 },
+                Card { suit: 0, rank: R9 },
+            ],
+            0
+        ));
+        assert!(!is_straight_flush(&[], 4));
+        assert!(is_straight_flush(&[], 5));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 0, rank: R5 },
+                Card { suit: 0, rank: R6 },
+                Card { suit: 1, rank: R7 },
+                Card { suit: 0, rank: R8 },
+                Card { suit: 0, rank: R9 },
+            ],
+            1
+        ));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 0, rank: R5 },
+                Card { suit: 0, rank: R6 },
+                Card { suit: 1, rank: R7 },
+                Card { suit: 1, rank: R8 },
+                Card { suit: 0, rank: R9 },
+            ],
+            1
+        ));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 0, rank: R5 },
+                Card { suit: 0, rank: R6 },
+                Card { suit: 1, rank: R9 },
+            ],
+            2
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 0, rank: R5 },
+                Card { suit: 0, rank: R6 },
+                Card { suit: 0, rank: R9 },
+            ],
+            2
+        ));
     }
 }
