@@ -56,11 +56,9 @@ fn is_n_of_a_kind(cards: &[Card], n: u8, num_jokers: u8) -> bool {
 fn is_two_pair(cards: &[Card], mut num_jokers: u8) -> bool {
     let mut num_pairs = 0;
     for i in rank_counts(cards) {
-        if i % 2 == 1 {
-            if num_jokers > 0 {
-                num_jokers -= 1;
-                num_pairs += 1;
-            }
+        if i % 2 == 1 && num_jokers > 0 {
+            num_jokers -= 1;
+            num_pairs += 1;
         }
         num_pairs += i / 2;
     }
