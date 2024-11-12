@@ -122,6 +122,18 @@ fn is_straight_flush(cards: &[Card], num_jokers: u8) -> bool {
         .any(|cards| is_straight(cards, num_jokers))
 }
 
+fn is_flush_house(cards: &[Card], num_jokers: u8) -> bool {
+    let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
+
+    for &c in cards {
+        cards_by_suit[c.suit as usize].push(c);
+    }
+
+    cards_by_suit
+        .iter()
+        .any(|cards| is_full_house(cards, num_jokers))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardOrJoker {
     Card(Card),
@@ -154,6 +166,7 @@ fn main() {
     let mut num_straight = 0;
     let mut num_flush = 0;
     let mut num_straight_flush = 0;
+    let mut num_flush_house = 0;
     for _ in 0..iters {
         let cards_or_jokers = deck
             .choose_multiple(&mut rng, 7)
@@ -197,6 +210,9 @@ fn main() {
         if is_straight_flush(&cards, num_jokers) {
             num_straight_flush += 1;
         }
+        if is_flush_house(&cards, num_jokers) {
+            num_flush_house += 1;
+        }
     }
     let mut counts = [
         ("Pair", num_pair),
@@ -208,6 +224,7 @@ fn main() {
         ("Flush", num_flush),
         ("Full House", num_full_house),
         ("Strt Flush", num_straight_flush),
+        ("Flush House", num_flush_house),
     ];
     let max_str_len = counts.iter().map(|(s, _)| s.len()).max().unwrap();
     counts.sort_by_key(|(_, c)| *c);
@@ -842,6 +859,78 @@ mod tests {
                 Card { suit: 0, rank: R5 },
                 Card { suit: 0, rank: R6 },
                 Card { suit: 0, rank: R9 },
+            ],
+            2
+        ));
+    }
+
+    #[test]
+    fn test_is_flush_house() {
+        assert!(!is_flush_house(&[], 0));
+        assert!(is_flush_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            0
+        ));
+        assert!(is_flush_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+            ],
+            0
+        ));
+        assert!(!is_flush_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 0, rank: 2 },
+            ],
+            0
+        ));
+
+        assert!(!is_flush_house(&[], 4));
+        assert!(is_flush_house(&[], 5));
+        assert!(is_flush_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+            ],
+            1
+        ));
+        assert!(!is_flush_house(
+            &[
+                Card { suit: 1, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+            ],
+            1
+        ));
+        assert!(is_flush_house(
+            &[
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
+            ],
+            2
+        ));
+        assert!(is_flush_house(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 2 },
             ],
             2
         ));
