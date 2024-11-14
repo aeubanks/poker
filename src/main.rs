@@ -151,9 +151,43 @@ struct Args {
 
     #[arg(long, default_value_t = 0)]
     jokers: u8,
+}
 
-    #[arg(long, default_value_t = 1000000)]
-    iters: u64,
+fn confidence_interval(total_iters: u64, num_true: u64) -> (f64, f64) {
+    let p = num_true as f64 / total_iters as f64;
+    // 99.73% confidence interval according to https://sigmazone.com/binomial-confidence-intervals/
+    let ci = 3.0 * (p * (1.0 - p) / total_iters as f64).sqrt();
+    (p, ci)
+}
+
+struct HandCount {
+    name: &'static str,
+    count: u64,
+    func: fn(&[Card], u8) -> bool,
+}
+
+impl HandCount {
+    fn new(name: &'static str, func: fn(&[Card], u8) -> bool) -> Self {
+        Self {
+            name,
+            count: 0,
+            func,
+        }
+    }
+
+    // TODO: write tests
+    fn overlap(&self, total_iters: u64, other: &HandCount) -> bool {
+        if self.count == 0 || other.count == 0 {
+            return false;
+        }
+        let ci1 = confidence_interval(total_iters, self.count);
+        let ci2 = confidence_interval(total_iters, other.count);
+        let ci1_start = ci1.0 - ci1.1;
+        let ci1_end = ci1.0 + ci1.1;
+        let ci2_start = ci2.0 - ci2.1;
+        let ci2_end = ci2.0 + ci2.1;
+        ci1_start <= ci2_end && ci2_start <= ci1_end
+    }
 }
 
 fn main() {
@@ -179,83 +213,80 @@ fn main() {
         deck.push(CardOrJoker::Joker);
     }
 
-    let mut num_pair = 0;
-    let mut num_3oak = 0;
-    let mut num_4oak = 0;
-    let mut num_5oak = 0;
-    let mut num_two_pair = 0;
-    let mut num_full_house = 0;
-    let mut num_straight = 0;
-    let mut num_flush = 0;
-    let mut num_straight_flush = 0;
-    let mut num_flush_house = 0;
-    for _ in 0..args.iters {
-        let cards_or_jokers = deck
-            .choose_multiple(&mut rng, args.cards)
-            .copied()
-            .collect::<arrayvec::ArrayVec<CardOrJoker, MAX_CARDS>>();
-        let num_jokers = cards_or_jokers
-            .iter()
-            .filter(|&&coj| coj == CardOrJoker::Joker)
-            .count() as u8;
-        let cards = cards_or_jokers
-            .iter()
-            .filter_map(|coj| match coj {
-                CardOrJoker::Card(c) => Some(*c),
-                CardOrJoker::Joker => None,
-            })
-            .collect::<arrayvec::ArrayVec<Card, MAX_CARDS>>();
-        if is_n_of_a_kind(&cards, 2, num_jokers) {
-            num_pair += 1;
+    let mut counts = [
+        HandCount::new("Pair", |cards, num_jokers| {
+            is_n_of_a_kind(cards, 2, num_jokers)
+        }),
+        HandCount::new("3oak", |cards, num_jokers| {
+            is_n_of_a_kind(cards, 3, num_jokers)
+        }),
+        HandCount::new("4oak", |cards, num_jokers| {
+            is_n_of_a_kind(cards, 4, num_jokers)
+        }),
+        HandCount::new("5oak", |cards, num_jokers| {
+            is_n_of_a_kind(cards, 5, num_jokers)
+        }),
+        HandCount::new("2 pair", is_two_pair),
+        HandCount::new("Straight", is_straight),
+        HandCount::new("Flush", is_flush),
+        HandCount::new("Full House", is_full_house),
+        HandCount::new("Strt Flush", is_straight_flush),
+        HandCount::new("Flush House", is_flush_house),
+    ];
+
+    let mut num_iters: u64 = 0;
+
+    loop {
+        for _ in 0..100000 {
+            let cards_or_jokers = deck
+                .choose_multiple(&mut rng, args.cards)
+                .copied()
+                .collect::<arrayvec::ArrayVec<CardOrJoker, MAX_CARDS>>();
+            let num_jokers = cards_or_jokers
+                .iter()
+                .filter(|&&coj| coj == CardOrJoker::Joker)
+                .count() as u8;
+            let cards = cards_or_jokers
+                .iter()
+                .filter_map(|coj| match coj {
+                    CardOrJoker::Card(c) => Some(*c),
+                    CardOrJoker::Joker => None,
+                })
+                .collect::<arrayvec::ArrayVec<Card, MAX_CARDS>>();
+            for c in &mut counts {
+                if (c.func)(&cards, num_jokers) {
+                    c.count += 1;
+                }
+            }
+            num_iters += 1;
         }
-        if is_n_of_a_kind(&cards, 3, num_jokers) {
-            num_3oak += 1;
+        let mut has_overlap = false;
+        'outer: for (idx, c1) in counts.iter().enumerate() {
+            for c2 in counts.iter().skip(idx + 1) {
+                has_overlap = c1.overlap(num_iters, c2);
+                if has_overlap {
+                    break 'outer;
+                }
+            }
         }
-        if is_n_of_a_kind(&cards, 4, num_jokers) {
-            num_4oak += 1;
-        }
-        if is_n_of_a_kind(&cards, 5, num_jokers) {
-            num_5oak += 1;
-        }
-        if is_two_pair(&cards, num_jokers) {
-            num_two_pair += 1;
-        }
-        if is_full_house(&cards, num_jokers) {
-            num_full_house += 1;
-        }
-        if is_straight(&cards, num_jokers) {
-            num_straight += 1;
-        }
-        if is_flush(&cards, num_jokers) {
-            num_flush += 1;
-        }
-        if is_straight_flush(&cards, num_jokers) {
-            num_straight_flush += 1;
-        }
-        if is_flush_house(&cards, num_jokers) {
-            num_flush_house += 1;
+        println!("{num_iters} iterations...");
+        if !has_overlap {
+            break;
         }
     }
-    let mut counts = [
-        ("Pair", num_pair),
-        ("3 of a kind", num_3oak),
-        ("4 of a kind", num_4oak),
-        ("5 of a kind", num_5oak),
-        ("2 pair", num_two_pair),
-        ("Staight", num_straight),
-        ("Flush", num_flush),
-        ("Full House", num_full_house),
-        ("Strt Flush", num_straight_flush),
-        ("Flush House", num_flush_house),
-    ];
-    let max_str_len = counts.iter().map(|(s, _)| s.len()).max().unwrap();
-    counts.sort_by_key(|(_, c)| *c);
+    println!("--------------");
+    println!("(no overlapping 99% confidence intervals)");
+    println!("total iterations: {num_iters}");
+    let max_str_len = counts.iter().map(|c| c.name.len()).max().unwrap();
+    counts.sort_by_key(|c| (c.count, c.name));
     counts.reverse();
-    for (s, c) in counts {
+    for c in counts {
         println!(
-            "{s: >width$}: {p}",
+            "{name: >width$}: {p:.6} ({count})",
+            name = c.name,
             width = max_str_len,
-            p = (c as f64 / args.iters as f64)
+            p = (c.count as f64 / num_iters as f64),
+            count = c.count,
         );
     }
 }
