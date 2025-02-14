@@ -190,6 +190,22 @@ impl HandCount {
     }
 }
 
+fn print_counts(counts: &[HandCount], num_iters: u64) {
+    let mut counts = counts.iter().collect::<Vec<_>>();
+    let max_str_len = counts.iter().map(|c| c.name.len()).max().unwrap();
+    counts.sort_by_key(|c| (c.count, c.name));
+    counts.reverse();
+    for c in counts {
+        println!(
+            "{name: >width$}: {p:.6} ({count})",
+            name = c.name,
+            width = max_str_len,
+            p = (c.count as f64 / num_iters as f64),
+            count = c.count,
+        );
+    }
+}
+
 fn main() {
     use rand::seq::SliceRandom;
 
@@ -237,7 +253,7 @@ fn main() {
     let mut num_iters: u64 = 0;
 
     loop {
-        for _ in 0..100000 {
+        for _ in 0..1000000 {
             let cards_or_jokers = deck
                 .choose_multiple(&mut rng, args.cards)
                 .copied()
@@ -273,22 +289,12 @@ fn main() {
         if !has_overlap {
             break;
         }
+        print_counts(&counts, num_iters);
+        println!("--------------");
     }
-    println!("--------------");
     println!("(no overlapping 99% confidence intervals)");
     println!("total iterations: {num_iters}");
-    let max_str_len = counts.iter().map(|c| c.name.len()).max().unwrap();
-    counts.sort_by_key(|c| (c.count, c.name));
-    counts.reverse();
-    for c in counts {
-        println!(
-            "{name: >width$}: {p:.6} ({count})",
-            name = c.name,
-            width = max_str_len,
-            p = (c.count as f64 / num_iters as f64),
-            count = c.count,
-        );
-    }
+    print_counts(&counts, num_iters);
 }
 
 #[cfg(test)]
