@@ -53,19 +53,8 @@ fn is_n_of_a_kind(cards: &[Card], n: u8, num_jokers: u8) -> bool {
     num_jokers >= n
 }
 
-fn is_two_pair(cards: &[Card], mut num_jokers: u8) -> bool {
-    let mut num_pairs = 0;
-    for i in rank_counts(cards) {
-        if i % 2 == 1 && num_jokers > 0 {
-            num_jokers -= 1;
-            num_pairs += 1;
-        }
-        num_pairs += i / 2;
-    }
-    num_pairs + num_jokers / 2 >= 2
-}
-
-fn is_full_house(cards: &[Card], mut num_jokers: u8) -> bool {
+fn is_n_and_m_of_a_kind(cards: &[Card], n: u8, m: u8, mut num_jokers: u8) -> bool {
+    assert!(n >= m);
     let mut fill_with_jokers = |val: &mut u8, fill_to: u8| -> bool {
         if *val >= fill_to {
             return true;
@@ -80,37 +69,70 @@ fn is_full_house(cards: &[Card], mut num_jokers: u8) -> bool {
     let mut rank_counts = rank_counts(cards);
     // FIXME: no need to sort, just find two largest values
     rank_counts.sort_by(|a, b| b.cmp(a));
-    if !fill_with_jokers(&mut rank_counts[0], 3) {
+    if !fill_with_jokers(&mut rank_counts[0], n) {
         return false;
     }
-    rank_counts[0] -= 3;
-    if fill_with_jokers(&mut rank_counts[0], 2) {
+    rank_counts[0] -= n;
+    if fill_with_jokers(&mut rank_counts[0], m) {
         return true;
     }
-    fill_with_jokers(&mut rank_counts[1], 2)
+    fill_with_jokers(&mut rank_counts[1], m)
 }
 
-fn is_flush(cards: &[Card], num_jokers: u8) -> bool {
-    suit_counts(cards).iter().any(|&c| c + num_jokers >= 5)
+fn is_full_house(cards: &[Card], num_jokers: u8) -> bool {
+    is_n_and_m_of_a_kind(cards, 3, 2, num_jokers)
 }
 
-fn is_straight(cards: &[Card], num_jokers: u8) -> bool {
+fn is_two_triplet(cards: &[Card], num_jokers: u8) -> bool {
+    is_n_and_m_of_a_kind(cards, 3, 3, num_jokers)
+}
+
+fn is_full_mansion(cards: &[Card], num_jokers: u8) -> bool {
+    is_n_and_m_of_a_kind(cards, 4, 2, num_jokers)
+}
+
+fn is_n_pairs(cards: &[Card], n: u8, mut num_jokers: u8) -> bool {
+    let mut num_pairs = 0;
+    for i in rank_counts(cards) {
+        if i % 2 == 1 && num_jokers > 0 {
+            num_jokers -= 1;
+            num_pairs += 1;
+        }
+        num_pairs += i / 2;
+    }
+    num_pairs + num_jokers / 2 >= n
+}
+fn is_two_pair(cards: &[Card], num_jokers: u8) -> bool {
+    is_n_pairs(cards, 2, num_jokers)
+}
+
+fn is_three_pair(cards: &[Card], num_jokers: u8) -> bool {
+    is_n_pairs(cards, 3, num_jokers)
+}
+
+fn is_flush(cards: &[Card], num_jokers: u8, flush_size: u8) -> bool {
+    suit_counts(cards)
+        .iter()
+        .any(|&c| c + num_jokers >= flush_size)
+}
+
+fn is_straight(cards: &[Card], num_jokers: u8, straight_size: usize) -> bool {
     let ranks = ranks_for_straight(cards);
-    let mut window_sum = ranks.iter().take(5).sum::<u8>();
-    if window_sum + num_jokers == 5 {
+    let mut window_sum = ranks.iter().take(straight_size).sum::<u8>();
+    if window_sum + num_jokers == straight_size as u8 {
         return true;
     }
-    for i in 5..ranks.len() {
-        window_sum -= ranks[i - 5];
+    for i in straight_size..ranks.len() {
+        window_sum -= ranks[i - straight_size];
         window_sum += ranks[i];
-        if window_sum + num_jokers == 5 {
+        if window_sum + num_jokers == straight_size as u8 {
             return true;
         }
     }
     false
 }
 
-fn is_straight_flush(cards: &[Card], num_jokers: u8) -> bool {
+fn is_straight_flush(cards: &[Card], num_jokers: u8, size: usize) -> bool {
     let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
 
     for &c in cards {
@@ -119,7 +141,7 @@ fn is_straight_flush(cards: &[Card], num_jokers: u8) -> bool {
 
     cards_by_suit
         .iter()
-        .any(|cards| is_straight(cards, num_jokers))
+        .any(|cards| is_straight(cards, num_jokers, size))
 }
 
 fn is_flush_house(cards: &[Card], num_jokers: u8) -> bool {
@@ -151,6 +173,9 @@ struct Args {
 
     #[arg(long, default_value_t = 0)]
     jokers: u8,
+
+    #[arg(long, default_value_t = 5)]
+    hand_size: usize,
 }
 
 fn confidence_interval(total_iters: u64, num_true: u64) -> (f64, f64) {
@@ -229,26 +254,46 @@ fn main() {
         deck.push(CardOrJoker::Joker);
     }
 
-    let mut counts = [
-        HandCount::new("Pair", |cards, num_jokers| {
-            is_n_of_a_kind(cards, 2, num_jokers)
-        }),
-        HandCount::new("3oak", |cards, num_jokers| {
-            is_n_of_a_kind(cards, 3, num_jokers)
-        }),
-        HandCount::new("4oak", |cards, num_jokers| {
-            is_n_of_a_kind(cards, 4, num_jokers)
-        }),
-        HandCount::new("5oak", |cards, num_jokers| {
-            is_n_of_a_kind(cards, 5, num_jokers)
-        }),
-        HandCount::new("2 pair", is_two_pair),
-        HandCount::new("Straight", is_straight),
-        HandCount::new("Flush", is_flush),
-        HandCount::new("Full House", is_full_house),
-        HandCount::new("Strt Flush", is_straight_flush),
-        HandCount::new("Flush House", is_flush_house),
-    ];
+    let mut counts = Vec::new();
+    counts.push(HandCount::new("Pair", |cards, num_jokers| {
+        is_n_of_a_kind(cards, 2, num_jokers)
+    }));
+    counts.push(HandCount::new("3oak", |cards, num_jokers| {
+        is_n_of_a_kind(cards, 3, num_jokers)
+    }));
+    counts.push(HandCount::new("4oak", |cards, num_jokers| {
+        is_n_of_a_kind(cards, 4, num_jokers)
+    }));
+    counts.push(HandCount::new("5oak", |cards, num_jokers| {
+        is_n_of_a_kind(cards, 5, num_jokers)
+    }));
+    counts.push(HandCount::new("2 pair", is_two_pair));
+
+    if args.hand_size == 5 {
+        counts.push(HandCount::new("Full House", is_full_house));
+        counts.push(HandCount::new("Flush House", |cards, num_jokers| {
+            is_flush_house(cards, num_jokers)
+        }));
+        counts.push(HandCount::new("Strt Flush", |cards, num_jokers| {
+            is_straight_flush(cards, num_jokers, 5)
+        }));
+    } else if args.hand_size == 6 {
+        counts.push(HandCount::new("3 pair", is_three_pair));
+        counts.push(HandCount::new("6oak", |cards, num_jokers| {
+            is_n_of_a_kind(cards, 6, num_jokers)
+        }));
+        counts.push(HandCount::new("2 triplet", is_two_triplet));
+        counts.push(HandCount::new("Straight", |cards, num_jokers| {
+            is_straight(cards, num_jokers, 6)
+        }));
+        counts.push(HandCount::new("Flush", |cards, num_jokers| {
+            is_flush(cards, num_jokers, 6)
+        }));
+        counts.push(HandCount::new("Full Mansion", is_full_mansion));
+        counts.push(HandCount::new("Strt Flush", |cards, num_jokers| {
+            is_straight_flush(cards, num_jokers, 6)
+        }));
+    }
 
     let mut num_iters: u64 = 0;
 
@@ -605,9 +650,335 @@ mod tests {
     }
 
     #[test]
+    fn test_is_full_mansion() {
+        assert!(!is_full_mansion(&[], 0));
+        assert!(!is_full_mansion(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_full_mansion(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_full_mansion(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 2 },
+            ],
+            0
+        ));
+        assert!(is_full_mansion(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_full_mansion(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 0 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_full_mansion(&[], 6));
+        assert!(!is_full_mansion(&[], 5));
+        assert!(is_full_mansion(&[Card { suit: 0, rank: 0 },], 5));
+        assert!(is_full_mansion(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            2
+        ));
+        assert!(is_full_mansion(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            2
+        ));
+        assert!(!is_full_mansion(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+            ],
+            3
+        ));
+        assert!(is_full_mansion(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+            ],
+            3
+        ));
+        assert!(!is_three_pair(&[], 5));
+        assert!(is_three_pair(&[], 6));
+    }
+
+    #[test]
+    fn test_is_two_triplet() {
+        assert!(!is_two_triplet(&[], 0));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 0 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 1 },
+                Card { suit: 3, rank: 1 },
+            ],
+            0
+        ));
+        assert!(is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            1
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            1
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(!is_two_triplet(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(!is_two_triplet(&[], 5));
+        assert!(is_two_triplet(&[], 6));
+    }
+
+    #[test]
+    fn test_is_three_pair() {
+        assert!(!is_three_pair(&[], 0));
+        assert!(!is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(!is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            0
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            1
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            1
+        ));
+        assert!(!is_three_pair(
+            &[
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 1 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(is_three_pair(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 1, rank: 2 },
+                Card { suit: 2, rank: 0 },
+                Card { suit: 3, rank: 0 },
+            ],
+            2
+        ));
+        assert!(!is_three_pair(&[], 5));
+        assert!(is_three_pair(&[], 6));
+    }
+
+    #[test]
     fn test_is_flush() {
-        assert!(!is_flush(&[], 0));
-        assert!(!is_flush(&[Card { suit: 0, rank: 0 },], 0));
+        assert!(!is_flush(&[], 0, 5));
+        assert!(!is_flush(&[Card { suit: 0, rank: 0 },], 0, 5));
         assert!(!is_flush(
             &[
                 Card { suit: 0, rank: 0 },
@@ -615,7 +986,8 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 0, rank: 0 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_flush(
             &[
@@ -625,7 +997,8 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 0, rank: 0 },
             ],
-            0
+            0,
+            5
         ));
         assert!(!is_flush(
             &[
@@ -635,10 +1008,11 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 1, rank: 0 },
             ],
-            0
+            0,
+            5
         ));
-        assert!(!is_flush(&[], 4));
-        assert!(is_flush(&[], 5));
+        assert!(!is_flush(&[], 4, 5));
+        assert!(is_flush(&[], 5, 5));
         assert!(is_flush(
             &[
                 Card { suit: 0, rank: 0 },
@@ -647,7 +1021,8 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 1, rank: 0 },
             ],
-            1
+            1,
+            5
         ));
         assert!(is_flush(
             &[
@@ -656,7 +1031,8 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 1, rank: 0 },
             ],
-            2
+            2,
+            5
         ));
         assert!(!is_flush(
             &[
@@ -664,14 +1040,38 @@ mod tests {
                 Card { suit: 0, rank: 0 },
                 Card { suit: 1, rank: 0 },
             ],
-            2
+            2,
+            5
+        ));
+        assert!(!is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+            ],
+            0,
+            6
+        ));
+        assert!(is_flush(
+            &[
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 0 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 3 },
+            ],
+            0,
+            6
         ));
     }
 
     #[test]
     fn test_is_straight() {
-        assert!(!is_straight(&[], 0));
-        assert!(!is_straight(&[Card { suit: 0, rank: 0 },], 0));
+        assert!(!is_straight(&[], 0, 5));
+        assert!(!is_straight(&[Card { suit: 0, rank: 0 },], 0, 5));
 
         assert!(!is_straight(
             &[
@@ -680,7 +1080,8 @@ mod tests {
                 Card { suit: 0, rank: 4 },
                 Card { suit: 0, rank: 5 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight(
             &[
@@ -690,7 +1091,8 @@ mod tests {
                 Card { suit: 1, rank: R5 },
                 Card { suit: 1, rank: R6 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight(
             &[
@@ -700,7 +1102,8 @@ mod tests {
                 Card { suit: 0, rank: R5 },
                 Card { suit: 1, rank: R6 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight(
             &[
@@ -710,7 +1113,8 @@ mod tests {
                 Card { suit: 0, rank: RK },
                 Card { suit: 0, rank: RA },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight(
             &[
@@ -720,7 +1124,8 @@ mod tests {
                 Card { suit: 0, rank: R4 },
                 Card { suit: 0, rank: R5 },
             ],
-            0
+            0,
+            5
         ));
         assert!(!is_straight(
             &[
@@ -730,10 +1135,11 @@ mod tests {
                 Card { suit: 0, rank: R3 },
                 Card { suit: 0, rank: R4 },
             ],
-            0
+            0,
+            5
         ));
-        assert!(!is_straight(&[], 4));
-        assert!(is_straight(&[], 5));
+        assert!(!is_straight(&[], 4, 5));
+        assert!(is_straight(&[], 5, 5));
         assert!(is_straight(
             &[
                 Card { suit: 0, rank: RA },
@@ -741,7 +1147,8 @@ mod tests {
                 Card { suit: 0, rank: R3 },
                 Card { suit: 0, rank: R4 },
             ],
-            1
+            1,
+            5
         ));
         assert!(is_straight(
             &[
@@ -750,7 +1157,8 @@ mod tests {
                 Card { suit: 0, rank: R4 },
                 Card { suit: 0, rank: R5 },
             ],
-            1
+            1,
+            5
         ));
         assert!(is_straight(
             &[
@@ -758,7 +1166,8 @@ mod tests {
                 Card { suit: 0, rank: R3 },
                 Card { suit: 0, rank: R4 },
             ],
-            2
+            2,
+            5
         ));
         assert!(is_straight(
             &[
@@ -766,7 +1175,8 @@ mod tests {
                 Card { suit: 0, rank: R4 },
                 Card { suit: 0, rank: R5 },
             ],
-            2
+            2,
+            5
         ));
         assert!(is_straight(
             &[
@@ -774,19 +1184,23 @@ mod tests {
                 Card { suit: 0, rank: R4 },
                 Card { suit: 0, rank: R6 },
             ],
-            2
+            2,
+            5
         ));
         assert!(is_straight(
             &[Card { suit: 0, rank: R2 }, Card { suit: 0, rank: R6 },],
-            3
+            3,
+            5
         ));
         assert!(is_straight(
             &[Card { suit: 0, rank: R3 }, Card { suit: 0, rank: R6 },],
-            3
+            3,
+            5
         ));
         assert!(!is_straight(
             &[Card { suit: 0, rank: R3 }, Card { suit: 0, rank: R4 },],
-            2
+            2,
+            5
         ));
         assert!(is_straight(
             &[
@@ -795,7 +1209,8 @@ mod tests {
                 Card { suit: 0, rank: RK },
                 Card { suit: 0, rank: RA },
             ],
-            1
+            1,
+            5
         ));
         assert!(is_straight(
             &[
@@ -804,14 +1219,38 @@ mod tests {
                 Card { suit: 0, rank: RQ },
                 Card { suit: 0, rank: RK },
             ],
-            1
+            1,
+            5
+        ));
+        assert!(!is_straight(
+            &[
+                Card { suit: 0, rank: R9 },
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RQ },
+                Card { suit: 0, rank: RK },
+            ],
+            0,
+            6
+        ));
+        assert!(is_straight(
+            &[
+                Card { suit: 0, rank: R8 },
+                Card { suit: 0, rank: R9 },
+                Card { suit: 0, rank: R10 },
+                Card { suit: 0, rank: RJ },
+                Card { suit: 0, rank: RQ },
+                Card { suit: 0, rank: RK },
+            ],
+            0,
+            6
         ));
     }
 
     #[test]
     fn test_is_straight_flush() {
-        assert!(!is_straight_flush(&[], 0));
-        assert!(!is_straight_flush(&[Card { suit: 0, rank: 0 },], 0));
+        assert!(!is_straight_flush(&[], 0, 5));
+        assert!(!is_straight_flush(&[Card { suit: 0, rank: 0 },], 0, 5));
 
         assert!(!is_straight_flush(
             &[
@@ -820,7 +1259,8 @@ mod tests {
                 Card { suit: 0, rank: 4 },
                 Card { suit: 0, rank: 5 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight_flush(
             &[
@@ -830,7 +1270,8 @@ mod tests {
                 Card { suit: 1, rank: R5 },
                 Card { suit: 1, rank: R6 },
             ],
-            0
+            0,
+            5
         ));
         assert!(!is_straight_flush(
             &[
@@ -840,7 +1281,8 @@ mod tests {
                 Card { suit: 0, rank: R5 },
                 Card { suit: 1, rank: R6 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight_flush(
             &[
@@ -850,7 +1292,8 @@ mod tests {
                 Card { suit: 0, rank: RK },
                 Card { suit: 0, rank: RA },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight_flush(
             &[
@@ -860,7 +1303,8 @@ mod tests {
                 Card { suit: 0, rank: R4 },
                 Card { suit: 0, rank: R5 },
             ],
-            0
+            0,
+            5
         ));
         assert!(!is_straight_flush(
             &[
@@ -870,7 +1314,8 @@ mod tests {
                 Card { suit: 0, rank: R3 },
                 Card { suit: 0, rank: R4 },
             ],
-            0
+            0,
+            5
         ));
         assert!(is_straight_flush(
             &[
@@ -881,10 +1326,11 @@ mod tests {
                 Card { suit: 0, rank: R8 },
                 Card { suit: 0, rank: R9 },
             ],
-            0
+            0,
+            5
         ));
-        assert!(!is_straight_flush(&[], 4));
-        assert!(is_straight_flush(&[], 5));
+        assert!(!is_straight_flush(&[], 4, 5));
+        assert!(is_straight_flush(&[], 5, 5));
         assert!(is_straight_flush(
             &[
                 Card { suit: 0, rank: R5 },
@@ -893,7 +1339,8 @@ mod tests {
                 Card { suit: 0, rank: R8 },
                 Card { suit: 0, rank: R9 },
             ],
-            1
+            1,
+            5
         ));
         assert!(!is_straight_flush(
             &[
@@ -903,7 +1350,8 @@ mod tests {
                 Card { suit: 1, rank: R8 },
                 Card { suit: 0, rank: R9 },
             ],
-            1
+            1,
+            5
         ));
         assert!(!is_straight_flush(
             &[
@@ -911,7 +1359,8 @@ mod tests {
                 Card { suit: 0, rank: R6 },
                 Card { suit: 1, rank: R9 },
             ],
-            2
+            2,
+            5
         ));
         assert!(is_straight_flush(
             &[
@@ -919,7 +1368,31 @@ mod tests {
                 Card { suit: 0, rank: R6 },
                 Card { suit: 0, rank: R9 },
             ],
-            2
+            2,
+            5
+        ));
+        assert!(!is_straight_flush(
+            &[
+                Card { suit: 1, rank: R2 },
+                Card { suit: 1, rank: R3 },
+                Card { suit: 1, rank: R4 },
+                Card { suit: 1, rank: R5 },
+                Card { suit: 1, rank: R6 },
+            ],
+            0,
+            6
+        ));
+        assert!(is_straight_flush(
+            &[
+                Card { suit: 1, rank: R2 },
+                Card { suit: 1, rank: R3 },
+                Card { suit: 1, rank: R4 },
+                Card { suit: 1, rank: R5 },
+                Card { suit: 1, rank: R6 },
+                Card { suit: 1, rank: R7 },
+            ],
+            0,
+            6
         ));
     }
 
