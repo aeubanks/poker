@@ -311,6 +311,9 @@ fn main() {
         counts.push(HandCount::new("Flush 6", |cards, num_jokers| {
             is_flush_n(cards, 6, num_jokers)
         }));
+    } else {
+        println!("--hand-size must be 5 or 6");
+        std::process::exit(1);
     }
 
     let mut num_iters: u64 = 0;
