@@ -156,6 +156,18 @@ fn is_flush_house(cards: &[Card], num_jokers: u8) -> bool {
         .any(|cards| is_full_house(cards, num_jokers))
 }
 
+fn is_flush_n(cards: &[Card], n: u8, num_jokers: u8) -> bool {
+    let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
+
+    for &c in cards {
+        cards_by_suit[c.suit as usize].push(c);
+    }
+
+    cards_by_suit
+        .iter()
+        .any(|cards| is_n_of_a_kind(cards, n, num_jokers))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardOrJoker {
     Card(Card),
@@ -277,6 +289,9 @@ fn main() {
         counts.push(HandCount::new("Strt Flush", |cards, num_jokers| {
             is_straight_flush(cards, num_jokers, 5)
         }));
+        counts.push(HandCount::new("Flush 5", |cards, num_jokers| {
+            is_flush_n(cards, 5, num_jokers)
+        }));
     } else if args.hand_size == 6 {
         counts.push(HandCount::new("3 pair", is_three_pair));
         counts.push(HandCount::new("6oak", |cards, num_jokers| {
@@ -292,6 +307,9 @@ fn main() {
         counts.push(HandCount::new("Full Mansion", is_full_mansion));
         counts.push(HandCount::new("Strt Flush", |cards, num_jokers| {
             is_straight_flush(cards, num_jokers, 6)
+        }));
+        counts.push(HandCount::new("Flush 6", |cards, num_jokers| {
+            is_flush_n(cards, 6, num_jokers)
         }));
     }
 
@@ -1465,6 +1483,60 @@ mod tests {
                 Card { suit: 0, rank: 2 },
             ],
             2
+        ));
+    }
+
+    #[test]
+    fn test_is_flush_n() {
+        assert!(!is_flush_n(&[], 1, 0));
+        assert!(is_flush_n(&[Card { suit: 0, rank: 1 },], 1, 0));
+        assert!(is_flush_n(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            4,
+            0
+        ));
+        assert!(!is_flush_n(
+            &[
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            4,
+            0
+        ));
+        assert!(!is_flush_n(
+            &[
+                Card { suit: 2, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            4,
+            0
+        ));
+        assert!(is_flush_n(
+            &[
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            4,
+            1
+        ));
+        assert!(!is_flush_n(
+            &[
+                Card { suit: 0, rank: 2 },
+                Card { suit: 0, rank: 1 },
+                Card { suit: 0, rank: 1 },
+            ],
+            4,
+            1
         ));
     }
 }
