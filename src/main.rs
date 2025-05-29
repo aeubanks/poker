@@ -91,6 +91,42 @@ fn is_full_mansion(cards: &[Card], num_jokers: u8) -> bool {
     is_n_and_m_of_a_kind(cards, 4, 2, num_jokers)
 }
 
+fn is_flush_mansion(cards: &[Card], num_jokers: u8) -> bool {
+    let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
+
+    for &c in cards {
+        cards_by_suit[c.suit as usize].push(c);
+    }
+
+    cards_by_suit
+        .iter()
+        .any(|cards| is_full_mansion(cards, num_jokers))
+}
+
+fn is_flush_two_triplet(cards: &[Card], num_jokers: u8) -> bool {
+    let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
+
+    for &c in cards {
+        cards_by_suit[c.suit as usize].push(c);
+    }
+
+    cards_by_suit
+        .iter()
+        .any(|cards| is_two_triplet(cards, num_jokers))
+}
+
+fn is_flush_three_pair(cards: &[Card], num_jokers: u8) -> bool {
+    let mut cards_by_suit = <[arrayvec::ArrayVec<Card, MAX_CARDS>; NUM_SUITS as usize]>::default();
+
+    for &c in cards {
+        cards_by_suit[c.suit as usize].push(c);
+    }
+
+    cards_by_suit
+        .iter()
+        .any(|cards| is_three_pair(cards, num_jokers))
+}
+
 fn is_n_pairs(cards: &[Card], n: u8, mut num_jokers: u8) -> bool {
     let mut num_pairs = 0;
     for i in rank_counts(cards) {
@@ -280,9 +316,9 @@ fn main() {
         is_n_of_a_kind(cards, 5, num_jokers)
     }));
     counts.push(HandCount::new("2 pair", is_two_pair));
+    counts.push(HandCount::new("Full House", is_full_house));
 
     if args.hand_size == 5 {
-        counts.push(HandCount::new("Full House", is_full_house));
         counts.push(HandCount::new("Flush House", |cards, num_jokers| {
             is_flush_house(cards, num_jokers)
         }));
@@ -305,6 +341,9 @@ fn main() {
             is_flush(cards, num_jokers, 6)
         }));
         counts.push(HandCount::new("Full Mansion", is_full_mansion));
+        counts.push(HandCount::new("Flush Mansion", is_flush_mansion));
+        counts.push(HandCount::new("Flush 3 pair", is_flush_three_pair));
+        counts.push(HandCount::new("Flush 2 triplet", is_flush_two_triplet));
         counts.push(HandCount::new("Strt Flush", |cards, num_jokers| {
             is_straight_flush(cards, num_jokers, 6)
         }));
